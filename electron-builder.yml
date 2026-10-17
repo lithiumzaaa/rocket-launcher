@@ -1,0 +1,51 @@
+appId: com.tristin.rocketlauncher
+productName: Rocket Launcher
+copyright: Copyright © 2026 Tristin Dawson
+
+directories:
+  buildResources: build
+  output: dist
+
+# Only the compiled app: electron-vite's output plus package.json (no node_modules, no sources).
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+asar: true
+# The tray icon is loaded at runtime from resources/icon.ico.
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+
+# Auto-updates: installers + latest.yml live in a PUBLIC releases-only repo (source stays private),
+# so the installed app can check for updates without any token. Publish with `npm run release`.
+publish:
+  provider: github
+  owner: lithiumzaaa
+  repo: rocket-launcher-releases
+  releaseType: release
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+
+nsis:
+  # Short wizard (not one-click) so the install folder can be changed.
+  oneClick: false
+  # Per-user install under %LOCALAPPDATA%\Programs: no admin prompt.
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Rocket Launcher
+  uninstallDisplayName: Rocket Launcher
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  # Library, playtime and covers live in %APPDATA%\Rocket Launcher; keep them across reinstalls.
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+  artifactName: Rocket-Launcher-Setup-${version}.${ext}
