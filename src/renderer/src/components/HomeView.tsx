@@ -1,14 +1,25 @@
 import { Info, LayoutGrid } from 'lucide-react'
 import type { Game } from '@shared/types'
-import { formatPlaytime, totalMinutes } from '@shared/playtime'
 import { lastPlayedGame, useLibrary, visibleGames } from '../store/library'
 import { useUi } from '../store/ui'
+import { AchievementSummaryCard } from './AchievementsCard'
 import { ActivityCard } from './ActivityCard'
-import { CoverArt } from './Art'
 import { FavoritesBar } from './FavoritesBar'
 import { GameHero } from './GameHero'
+import { BacklogCard, LibraryCard, MostPlayedCard } from './LibraryStats'
 import { PlayButton } from './PlayButton'
-import { HabitsCard, RecentlyPlayed, StreakCard, usePlayerStats, WeekCard } from './PlayerStats'
+import {
+  HabitsCard,
+  HeatmapCard,
+  MilestonesCard,
+  MonthCard,
+  RecentlyPlayed,
+  RecordsCard,
+  StreakCard,
+  TrendsCard,
+  usePlayerStats,
+  WeekCard
+} from './PlayerStats'
 
 /** The hero's game plus the six recently played after it. */
 const RECENT_LIMIT = 7
@@ -16,17 +27,15 @@ const RECENT_LIMIT = 7
 /**
  * The hero is always the last played game, for a one-click relaunch. Everything below
  * it is the player's own stats across all games; per-game stats live on the game page.
+ *
+ * Every stats row sits on the same three equal columns (wide cards span two), so card
+ * edges line up down the page; cards in a row stretch to the same height.
  */
 export function HomeView(): JSX.Element {
   const games = useLibrary((s) => s.games)
   const stats = usePlayerStats(RECENT_LIMIT)
   const visible = visibleGames(games)
   const heroGame = lastPlayedGame(games)
-  const mostPlayed = [...visible]
-    .filter((g) => totalMinutes(g) > 0)
-    .sort((a, b) => totalMinutes(b) - totalMinutes(a))
-    .slice(0, 3)
-  const total = visible.reduce((sum, g) => sum + totalMinutes(g), 0)
 
   return (
     <div className="flex flex-col gap-6">
@@ -37,31 +46,37 @@ export function HomeView(): JSX.Element {
       {stats && <RecentlyPlayed stats={stats} games={visible} skipId={heroGame?.id} />}
 
       {stats && (
-        <div className="grid grid-cols-3 gap-6">
-          <WeekCard stats={stats} />
-          <StreakCard stats={stats} />
-          <HabitsCard stats={stats} games={games} />
-        </div>
+        <>
+          <div className="grid grid-cols-3 gap-6">
+            <WeekCard stats={stats} />
+            <MonthCard stats={stats} />
+            <StreakCard stats={stats} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-6">
+            <RecordsCard stats={stats} games={games} />
+            <MilestonesCard stats={stats} games={visible} />
+            <TrendsCard stats={stats} games={games} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-6">
+            <HeatmapCard stats={stats} className="col-span-2" />
+            <HabitsCard stats={stats} />
+          </div>
+        </>
       )}
 
-      <div className="grid grid-cols-[1fr_1.3fr_1.2fr] gap-6">
-        <LibraryCard count={visible.length} minutes={total} />
-        <MostPlayedCard games={mostPlayed} />
+      <div className="grid grid-cols-3 gap-6">
+        <MostPlayedCard games={visible} />
         <ActivityCard />
+        <LibraryCard games={visible} />
+      </div>
+
+      <div className="grid grid-cols-3 gap-6">
+        <BacklogCard games={visible} className="col-span-2" />
+        <AchievementSummaryCard games={games} />
       </div>
     </div>
-  )
-}
-
-function LibraryCard({ count, minutes }: { count: number; minutes: number }): JSX.Element {
-  return (
-    <section className="card flex flex-col p-6">
-      <h3 className="text-lg font-semibold">Library</h3>
-      <div className="mt-3 text-3xl font-semibold">{count}</div>
-      <div className="text-xs text-ink-muted">games installed</div>
-      <div className="mt-5 text-3xl font-semibold">{formatPlaytime(minutes)}</div>
-      <div className="text-xs text-ink-muted">played across all games</div>
-    </section>
   )
 }
 
@@ -99,44 +114,6 @@ function WelcomeHero(): JSX.Element {
           <LayoutGrid size={16} /> Browse library
         </button>
       </div>
-    </section>
-  )
-}
-
-function MostPlayedCard({ games }: { games: Game[] }): JSX.Element {
-  const openGame = useUi((s) => s.openGame)
-  const top = games[0] ? totalMinutes(games[0]) : 0
-
-  return (
-    <section className="card p-6">
-      <h3 className="text-lg font-semibold">Most played</h3>
-      {games.length === 0 ? (
-        <p className="mt-3 text-sm text-ink-muted">Play a game to see it here.</p>
-      ) : (
-        <div className="mt-3 flex flex-col gap-2">
-          {games.map((g) => {
-            const minutes = totalMinutes(g)
-            return (
-              <button
-                key={g.id}
-                onClick={() => openGame(g.id)}
-                className="flex items-center gap-3 rounded-md p-1.5 text-left transition-colors hover:bg-white/5"
-              >
-                <div className="relative h-14 w-[38px] shrink-0 overflow-hidden rounded-md">
-                  <CoverArt game={g} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{g.title}</div>
-                  <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
-                    <div className="h-full rounded-full bg-accent" style={{ width: `${(minutes / top) * 100}%` }} />
-                  </div>
-                </div>
-                <div className="w-16 shrink-0 text-right text-xs text-ink-muted">{formatPlaytime(minutes)}</div>
-              </button>
-            )
-          })}
-        </div>
-      )}
     </section>
   )
 }

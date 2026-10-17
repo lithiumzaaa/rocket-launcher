@@ -1,6 +1,14 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { Achievement, AchievementSet, Game, SteamAccount } from '../shared/types'
+import { totalMinutes } from '../shared/playtime'
+import type {
+  Achievement,
+  AchievementHighlight,
+  AchievementSet,
+  AchievementSummary,
+  Game,
+  SteamAccount
+} from '../shared/types'
 import { fetchWithTimeout } from './artwork'
 import { settingsStore } from './db'
 import { findSteamRoot } from './scanners/steam'
@@ -9,6 +17,9 @@ import { parseVdf, vdfStr, type VdfObject } from './scanners/vdf'
 const API = 'https://api.steampowered.com/ISteamUserStats'
 /** Unlocks change rarely; the game page re-asks after this, and right after a session ends. */
 const CACHE_MS = 5 * 60_000
+const SUMMARY_CACHE_MS = 15 * 60_000
+/** Parallel games while building the Home summary (three requests each). */
+const SUMMARY_CONCURRENCY = 4
 
 /**
  * The Steam account signed in on this PC, from config/loginusers.vdf: the "MostRecent" user,
@@ -60,11 +71,76 @@ interface PlayerAchievement {
 }
 
 const cache = new Map<string, { at: number; data: AchievementSet }>()
+let summaryCache: { at: number; data: AchievementSummary } | undefined
+let summaryInFlight: Promise<AchievementSummary> | undefined
 
 /** Drop cached achievements: one game (a session just ended) or all (API key changed). */
 export function invalidateAchievements(gameId?: string): void {
   if (gameId) cache.delete(gameId)
   else cache.clear()
+  summaryCache = undefined
+}
+
+/**
+ * Achievements summed over every played Steam game (unplayed ones have nothing unlocked,
+ * and skipping them keeps a big library from costing hundreds of requests).
+ */
+export function achievementSummary(games: Game[]): Promise<AchievementSummary> {
+  if (summaryCache && Date.now() - summaryCache.at < SUMMARY_CACHE_MS) return Promise.resolve(summaryCache.data)
+  summaryInFlight ??= buildSummary(games).finally(() => (summaryInFlight = undefined))
+  return summaryInFlight
+}
+
+async function buildSummary(games: Game[]): Promise<AchievementSummary> {
+  const empty = { unlocked: 0, total: 0, games: 0, perfect: 0, recent: [] }
+  if (!settingsStore().get().steamApiKey?.trim()) return { status: 'no-key', ...empty }
+  if (!(await steamAccount())) return { status: 'no-account', ...empty }
+
+  const played = games.filter((g) => g.source === 'steam' && !g.hidden && totalMinutes(g) > 0)
+  const sets: [Game, AchievementSet][] = []
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < played.length) {
+      const game = played[next++]
+      sets.push([game, await gameAchievements(game)])
+    }
+  }
+  await Promise.all(Array.from({ length: SUMMARY_CONCURRENCY }, worker))
+
+  const ok = sets.filter(([, s]) => s.status === 'ok')
+  if (ok.length === 0) {
+    const status = sets.some(([, s]) => s.status === 'private')
+      ? 'private'
+      : sets.some(([, s]) => s.status === 'error')
+        ? 'error'
+        : 'none'
+    return { status, ...empty }
+  }
+
+  const unlocked: AchievementHighlight[] = ok.flatMap(([game, s]) =>
+    s.items
+      .filter((a) => a.unlocked)
+      .map((a) => ({ gameId: game.id, name: a.name, icon: a.icon, unlockedAt: a.unlockedAt, percent: a.percent }))
+  )
+  const rarest = unlocked
+    .filter((a) => a.percent !== undefined && !Number.isNaN(a.percent))
+    .reduce<AchievementHighlight | undefined>((best, a) => (!best || a.percent! < best.percent! ? a : best), undefined)
+
+  const data: AchievementSummary = {
+    status: 'ok',
+    unlocked: unlocked.length,
+    total: ok.reduce((sum, [, s]) => sum + s.total, 0),
+    games: ok.length,
+    perfect: ok.filter(([, s]) => s.total > 0 && s.unlocked === s.total).length,
+    recent: unlocked
+      .filter((a) => a.unlockedAt)
+      .sort((a, b) => (b.unlockedAt ?? 0) - (a.unlockedAt ?? 0))
+      .slice(0, 3),
+    rarest
+  }
+  // Partial failures (one game's request timed out) shouldn't stick for the whole cache window.
+  if (ok.length === sets.filter(([, s]) => s.status !== 'none').length) summaryCache = { at: Date.now(), data }
+  return data
 }
 
 /**

@@ -113,6 +113,53 @@ export interface PlayerStats {
   dayParts: Record<DayPart, number>
   /** Most recently played games, newest first, with their latest tracked session. */
   recent: { gameId: string; lastPlayed: number; lastSessionMinutes?: number }[]
+
+  /** This month so far, the same days of last month, all of last month, and this year so far. */
+  monthMinutes: number
+  prevMonthToDateMinutes: number
+  prevMonthMinutes: number
+  yearMinutes: number
+  /** Distinct games played this calendar month. */
+  monthGames: number
+
+  /** Personal bests. Days/weeks are local midnight epoch ms (weeks start Monday). */
+  bestDay?: { day: number; minutes: number }
+  bestWeek?: { start: number; minutes: number }
+  mostGamesInDay?: { day: number; count: number }
+
+  /** Game with the biggest gain over the previous 7 days. */
+  rising?: { gameId: string; minutes: number; prevMinutes: number }
+  /** Game with the biggest share of the last 7 days (share 0–1). */
+  focus?: { gameId: string; minutes: number; share: number }
+  /** A game picked up again in the last 30 days after a 30+ day break. */
+  comeback?: { gameId: string; gapDays: number; at: number }
+
+  /** Minutes per weekday (0 = Monday) × hour of day. */
+  heatmap: number[][]
+  /** Median time of the day's first session, in minutes after midnight (can exceed 1440 for after-midnight starts). */
+  typicalStartMinutes?: number
+}
+
+export interface AchievementHighlight {
+  gameId: string
+  name: string
+  icon: string
+  unlockedAt?: number
+  /** Share of all players who unlocked it, 0–100. */
+  percent?: number
+}
+
+/** Home dashboard: achievements summed over every played game that has them. */
+export interface AchievementSummary {
+  status: 'ok' | 'none' | 'no-key' | 'no-account' | 'private' | 'error'
+  unlocked: number
+  total: number
+  /** Games with achievements, and how many of those are 100%. */
+  games: number
+  perfect: number
+  /** Newest unlocks first. */
+  recent: AchievementHighlight[]
+  rarest?: AchievementHighlight
 }
 
 export interface ManualGame {
@@ -186,6 +233,8 @@ export interface Api {
   getSteamAccount(): Promise<SteamAccount | null>
   testSteamApiKey(key: string): Promise<boolean>
   getAchievements(id: string): Promise<AchievementSet>
+  /** Achievements across all played games, for the Home dashboard. */
+  getAchievementSummary(): Promise<AchievementSummary>
   /** Minutes played per day for the last `days` days (last entry = today). */
   getGameActivity(id: string, days: number): Promise<number[]>
   /** Ids of games whose processes are running right now. */

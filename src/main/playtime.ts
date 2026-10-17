@@ -307,6 +307,16 @@ function dayNumber(ms: number): number {
   return Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000)
 }
 
+/** Local midnight (epoch ms) of a dayNumber. */
+function dayStart(day: number): number {
+  const d = new Date(day * 86_400_000)
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime()
+}
+
+const COMEBACK_GAP_MS = 30 * 86_400_000
+/** Hour a "play day" starts, for the typical start time. */
+const DAY_START_HOUR = 5
+
 function dayPart(hour: number): DayPart {
   if (hour >= 5 && hour < 12) return 'morning'
   if (hour >= 12 && hour < 17) return 'afternoon'
@@ -325,17 +335,33 @@ export function playerStats(recentLimit: number): PlayerStats {
   const week = minutesPerDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6), 7)
   const prevWeek = minutesPerDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 13), 7)
   const weekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6).getTime()
+  const prevWeekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 13).getTime()
 
-  // Every day a session touches, plus minutes per part of the day (walked hour by hour).
+  // Every day a session touches, plus minutes per part of the day, per day, per
+  // weekday × hour and per game this/last week (walked hour by hour).
   const days = new Set<number>()
   const dayParts: Record<DayPart, number> = { morning: 0, afternoon: 0, evening: 0, night: 0 }
+  const heatmap = Array.from({ length: 7 }, () => new Array<number>(24).fill(0))
+  const dayMinutes = new Map<number, number>()
+  const dayGames = new Map<number, Set<string>>()
+  const gameWeek = new Map<string, number>()
+  const gamePrevWeek = new Map<string, number>()
   const weekGames = new Set<string>()
   for (const s of spans) {
     if (s.end > weekStart) weekGames.add(s.gameId)
     for (let d = dayNumber(s.start); d <= dayNumber(s.end); d++) days.add(d)
     for (let t = s.start; t < s.end; ) {
       const next = Math.min(s.end, new Date(t).setMinutes(60, 0, 0))
-      dayParts[dayPart(new Date(t).getHours())] += (next - t) / 60_000
+      const minutes = (next - t) / 60_000
+      const date = new Date(t)
+      const day = dayNumber(t)
+      dayParts[dayPart(date.getHours())] += minutes
+      heatmap[(date.getDay() + 6) % 7][date.getHours()] += minutes
+      dayMinutes.set(day, (dayMinutes.get(day) ?? 0) + minutes)
+      if (!dayGames.has(day)) dayGames.set(day, new Set())
+      dayGames.get(day)!.add(s.gameId)
+      const perGame = t >= weekStart ? gameWeek : t >= prevWeekStart ? gamePrevWeek : undefined
+      perGame?.set(s.gameId, (perGame.get(s.gameId) ?? 0) + minutes)
       t = next
     }
   }
@@ -366,6 +392,72 @@ export function playerStats(recentLimit: number): PlayerStats {
     .slice(0, recentLimit)
     .map((g) => ({ gameId: g.id, lastPlayed: g.lastPlayed ?? 0, lastSessionMinutes: latestSession.get(g.id)?.minutes }))
 
+  // Month and year totals, from the per-day minutes.
+  const firstOfMonth = dayNumber(new Date(today.getFullYear(), today.getMonth(), 1).getTime())
+  const firstOfPrevMonth = dayNumber(new Date(today.getFullYear(), today.getMonth() - 1, 1).getTime())
+  const prevMonthToDateEnd = Math.min(firstOfPrevMonth + today.getDate() - 1, firstOfMonth - 1)
+  const firstOfYear = dayNumber(new Date(today.getFullYear(), 0, 1).getTime())
+  const sumDays = (from: number, to: number): number => {
+    let sum = 0
+    for (const [d, m] of dayMinutes) if (d >= from && d <= to) sum += m
+    return Math.round(sum)
+  }
+  const monthGames = new Set<string>()
+  for (const [d, ids] of dayGames) if (d >= firstOfMonth) for (const id of ids) monthGames.add(id)
+
+  // Personal bests.
+  let bestDay: PlayerStats['bestDay']
+  const weekTotals = new Map<number, number>()
+  for (const [d, m] of dayMinutes) {
+    if (!bestDay || m > bestDay.minutes) bestDay = { day: d, minutes: m }
+    // Day 0 (1 Jan 1970) was a Thursday: +3 makes Monday 0.
+    const monday = d - ((d + 3) % 7)
+    weekTotals.set(monday, (weekTotals.get(monday) ?? 0) + m)
+  }
+  let bestWeek: PlayerStats['bestWeek']
+  for (const [start, m] of weekTotals) if (!bestWeek || m > bestWeek.minutes) bestWeek = { start, minutes: m }
+  let mostGamesInDay: PlayerStats['mostGamesInDay']
+  for (const [d, ids] of dayGames) if (!mostGamesInDay || ids.size > mostGamesInDay.count) mostGamesInDay = { day: d, count: ids.size }
+
+  // Trends over the last 7 days. "Rising" needs a real gain (30+ minutes).
+  let rising: PlayerStats['rising']
+  let focus: PlayerStats['focus']
+  const weekTotal = [...gameWeek.values()].reduce((a, b) => a + b, 0)
+  for (const [gameId, m] of gameWeek) {
+    const prev = gamePrevWeek.get(gameId) ?? 0
+    if (m - prev >= 30 && (!rising || m - prev > rising.minutes - rising.prevMinutes)) {
+      rising = { gameId, minutes: Math.round(m), prevMinutes: Math.round(prev) }
+    }
+    if (!focus || m > focus.minutes) focus = { gameId, minutes: Math.round(m), share: weekTotal ? m / weekTotal : 0 }
+  }
+
+  // Comeback: the latest return within 30 days after a 30+ day gap in that game's sessions.
+  let comeback: PlayerStats['comeback']
+  const byGame = new Map<string, { start: number; end: number }[]>()
+  for (const s of spans) byGame.set(s.gameId, [...(byGame.get(s.gameId) ?? []), s])
+  for (const [gameId, list] of byGame) {
+    list.sort((a, b) => a.start - b.start)
+    for (let i = 1; i < list.length; i++) {
+      const gap = list[i].start - list[i - 1].end
+      if (gap < COMEBACK_GAP_MS || now - list[i].start > COMEBACK_GAP_MS) continue
+      if (!comeback || list[i].start > comeback.at) {
+        comeback = { gameId, gapDays: Math.floor(gap / 86_400_000), at: list[i].start }
+      }
+    }
+  }
+
+  // Typical start: median first session of each play day. Days run 5am–5am so a
+  // 1am start counts as late that night, not early the next morning.
+  const firstStart = new Map<number, number>()
+  for (const s of spans) {
+    const shifted = new Date(s.start - DAY_START_HOUR * 3_600_000)
+    const minutes = (shifted.getHours() + DAY_START_HOUR) * 60 + shifted.getMinutes()
+    const day = dayNumber(shifted.getTime())
+    firstStart.set(day, Math.min(firstStart.get(day) ?? Infinity, minutes))
+  }
+  const starts = [...firstStart.values()].sort((a, b) => a - b)
+  const typicalStartMinutes = starts.length ? starts[Math.floor(starts.length / 2)] : undefined
+
   return {
     weekMinutes: week.reduce((a, b) => a + b, 0),
     prevWeekMinutes: prevWeek.reduce((a, b) => a + b, 0),
@@ -377,7 +469,20 @@ export function playerStats(recentLimit: number): PlayerStats {
     averageSessionMinutes: sessions.length ? Math.round(total / sessions.length) : 0,
     longestSession: longest && { gameId: longest.gameId, minutes: longest.minutes, start: longest.start },
     dayParts,
-    recent
+    recent,
+    monthMinutes: sumDays(firstOfMonth, Infinity),
+    prevMonthToDateMinutes: sumDays(firstOfPrevMonth, prevMonthToDateEnd),
+    prevMonthMinutes: sumDays(firstOfPrevMonth, firstOfMonth - 1),
+    yearMinutes: sumDays(firstOfYear, Infinity),
+    monthGames: monthGames.size,
+    bestDay: bestDay && { day: dayStart(bestDay.day), minutes: Math.round(bestDay.minutes) },
+    bestWeek: bestWeek && { start: dayStart(bestWeek.start), minutes: Math.round(bestWeek.minutes) },
+    mostGamesInDay: mostGamesInDay && { day: dayStart(mostGamesInDay.day), count: mostGamesInDay.count },
+    rising,
+    focus,
+    comeback,
+    heatmap: heatmap.map((row) => row.map(Math.round)),
+    typicalStartMinutes
   }
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AchievementSet } from '@shared/types'
+import type { AchievementSet, AchievementSummary } from '@shared/types'
 import { useLibrary } from '../store/library'
 
 /**
@@ -21,6 +21,22 @@ export function useAchievements(gameId: string | undefined): AchievementSet | nu
 
   // Don't show the previous game's data while the next one loads.
   useEffect(() => setData(null), [gameId])
+
+  return data
+}
+
+/** Achievements across all played games; re-asks when a session ends, like useAchievements. */
+export function useAchievementSummary(): AchievementSummary | null {
+  const running = useLibrary((s) => s.running)
+  const [data, setData] = useState<AchievementSummary | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    window.api.getAchievementSummary().then((d) => !cancelled && setData(d))
+    return () => {
+      cancelled = true
+    }
+  }, [running])
 
   return data
 }

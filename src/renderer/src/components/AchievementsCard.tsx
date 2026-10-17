@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Lock, Trophy } from 'lucide-react'
-import type { Achievement, AchievementSet } from '@shared/types'
+import type { Achievement, AchievementHighlight, AchievementSet, AchievementSummary, Game } from '@shared/types'
 import { formatLastPlayed } from '@shared/playtime'
-import { rarity, useAchievements } from '../lib/achievements'
+import { rarity, useAchievements, useAchievementSummary } from '../lib/achievements'
 import { useUi } from '../store/ui'
 
 type Tab = 'unlocked' | 'locked'
@@ -17,9 +17,7 @@ export function AchievementsCard({ gameId }: { gameId: string }): JSX.Element | 
   if (!data || data.status === 'unsupported' || data.status === 'none') return null
   if (data.status !== 'ok') return <SetupCard data={data} />
 
-  const unlocked = data.items
-    .filter((a) => a.unlocked)
-    .sort((a, b) => (b.unlockedAt ?? 0) - (a.unlockedAt ?? 0))
+  const unlocked = data.items.filter((a) => a.unlocked).sort((a, b) => (b.unlockedAt ?? 0) - (a.unlockedAt ?? 0))
   // Rarest first among locked: the interesting targets.
   const locked = data.items.filter((a) => !a.unlocked).sort((a, b) => (a.percent ?? 100) - (b.percent ?? 100))
   const list = tab === 'unlocked' ? unlocked : locked
@@ -127,9 +125,7 @@ function AchievementRow({ a }: { a: Achievement }): JSX.Element {
           {!a.unlocked && <Lock size={12} className="shrink-0 text-ink-faint" />}
           <span className="truncate">{secret ? 'Hidden achievement' : a.name}</span>
         </div>
-        <div className="line-clamp-2 text-xs text-ink-muted">
-          {secret ? 'Keep playing to reveal it.' : a.description || ' '}
-        </div>
+        <div className="line-clamp-2 text-xs text-ink-muted">{secret ? 'Keep playing to reveal it.' : a.description || ' '}</div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         {r && <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${r.className}`}>{r.label}</span>}
@@ -142,6 +138,89 @@ function AchievementRow({ a }: { a: Achievement }): JSX.Element {
         </span>
       </div>
     </div>
+  )
+}
+
+/** Home: achievements across every played game — progress, perfect games, rarest and latest unlocks. */
+export function AchievementSummaryCard({ games }: { games: Game[] }): JSX.Element {
+  const data = useAchievementSummary()
+  const setSection = useUi((s) => s.setSection)
+  const openGame = useUi((s) => s.openGame)
+  const titles = new Map(games.map((g) => [g.id, g.title]))
+
+  const message: Partial<Record<AchievementSummary['status'], string>> = {
+    'no-key': 'Add a Steam Web API key in Settings to see your achievements here.',
+    'no-account': 'Sign in to Steam on this PC so Rocket Launcher can find your account.',
+    private: 'Your profile’s game details are private, so achievements can’t be read.',
+    error: 'Couldn’t load achievements. Try again later.',
+    none: 'None of the games you’ve played have achievements yet.'
+  }
+
+  const pct = data?.total ? Math.round((data.unlocked / data.total) * 100) : 0
+  const highlight = (a: AchievementHighlight, detail: string, key: string): JSX.Element => (
+    <button
+      key={key}
+      onClick={() => openGame(a.gameId)}
+      className="-mx-1.5 flex items-center gap-3 rounded-md p-1.5 text-left transition-colors hover:bg-white/5"
+    >
+      <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-bg-chip">
+        {a.icon ? (
+          <img src={a.icon} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover" />
+        ) : (
+          <Trophy size={14} className="absolute inset-0 m-auto text-ink-faint" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium">{a.name}</div>
+        <div className="truncate text-[11px] text-ink-muted">{[titles.get(a.gameId), detail].filter(Boolean).join(' · ')}</div>
+      </div>
+    </button>
+  )
+
+  return (
+    <section className="card flex flex-col p-6">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-lg font-semibold">Achievements</h3>
+        {data?.status === 'ok' && <span className="text-xs text-ink-muted">{pct}% complete</span>}
+      </div>
+
+      {!data ? (
+        <p className="mt-3 text-sm text-ink-muted">Loading achievements…</p>
+      ) : data.status !== 'ok' ? (
+        <div className="mt-3 flex flex-1 flex-col items-start gap-4">
+          <p className="text-sm text-ink-muted">{message[data.status]}</p>
+          {data.status === 'no-key' && (
+            <button onClick={() => setSection('settings')} className="pill">
+              Open Settings
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="mt-3">
+            <div className="text-sm">
+              <span className="text-3xl font-semibold">{data.unlocked.toLocaleString()}</span>
+              <span className="text-ink-muted"> / {data.total.toLocaleString()} unlocked</span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="mt-2 text-[11px] text-ink-muted">
+              {data.perfect.toLocaleString()} of {data.games.toLocaleString()} games at 100%
+            </div>
+          </div>
+          {/* Highlights take the spare height (rows spread) instead of a gap opening above them. */}
+          <div className="mb-2 mt-5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">Highlights</div>
+          <div className="flex flex-1 flex-col justify-between gap-1">
+            {data.rarest && highlight(data.rarest, `rarest · ${data.rarest.percent?.toFixed(1)}% of players`, 'rarest')}
+            {data.recent
+              .filter((a) => !(a.gameId === data.rarest?.gameId && a.name === data.rarest?.name))
+              .slice(0, 2)
+              .map((a, i) => highlight(a, formatLastPlayed(a.unlockedAt), `recent-${i}`))}
+          </div>
+        </>
+      )}
+    </section>
   )
 }
 

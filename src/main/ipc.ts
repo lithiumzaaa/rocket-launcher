@@ -12,7 +12,7 @@ import {
   setArtFromUrl,
   testSteamGridDbKey
 } from './artwork'
-import { gameAchievements, invalidateAchievements, steamAccount, testSteamApiKey } from './achievements'
+import { achievementSummary, gameAchievements, invalidateAchievements, steamAccount, testSteamApiKey } from './achievements'
 import { libraryStore, settingsStore, updateGame } from './db'
 import { checkForUpdates, downloadUpdate, installUpdate, updateState } from './updater'
 import { applyStartWithWindows, hideWhilePlaying } from './window'
@@ -87,6 +87,7 @@ export function registerIpc({ acrylic }: { acrylic: boolean }): void {
   ipcMain.handle('steam:account', async () => (await steamAccount()) ?? null)
   ipcMain.handle('steam:test-key', (_e, key: string) => testSteamApiKey(key))
   ipcMain.handle('achievements:get', (_e, id: string) => gameAchievements(findGame(id)))
+  ipcMain.handle('achievements:summary', () => achievementSummary(libraryStore().get().games))
   ipcMain.handle('artwork:test-key', (_e, key: string) => testSteamGridDbKey(key))
 
   ipcMain.handle('folders:auto', () => autoGameFolders())

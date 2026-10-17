@@ -38,6 +38,7 @@ const api: Api = {
   getSteamAccount: () => ipcRenderer.invoke('steam:account'),
   testSteamApiKey: (key) => ipcRenderer.invoke('steam:test-key', key),
   getAchievements: (id) => ipcRenderer.invoke('achievements:get', id),
+  getAchievementSummary: () => ipcRenderer.invoke('achievements:summary'),
   getGameActivity: (id, days) => ipcRenderer.invoke('playtime:game-activity', id, days),
   getRunning: () => ipcRenderer.invoke('playtime:running'),
   onRunningChanged: (cb) => {

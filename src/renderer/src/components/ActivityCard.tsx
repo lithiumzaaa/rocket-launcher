@@ -30,7 +30,7 @@ export function ActivityCard(): JSX.Element {
   const total = days.reduce((a, b) => a + b, 0)
 
   return (
-    <section className="card p-6">
+    <section className="card flex flex-col p-6">
       <div className="flex items-baseline justify-between">
         <h3 className="text-lg font-semibold">Activity in {now.toLocaleString(undefined, { month: 'long' })}</h3>
         <span className="text-xs text-ink-muted">{formatPlaytime(total)}</span>
@@ -41,7 +41,8 @@ export function ActivityCard(): JSX.Element {
         <Legend className="bg-ink-faint">2h+</Legend>
         <Legend className="bg-accent">4h+</Legend>
       </div>
-      <div className="mt-3 grid grid-cols-7 gap-1.5">
+      {/* Rows share the card's height, so a taller row grows the cells instead of leaving a gap. */}
+      <div className="mt-3 grid min-h-0 flex-1 auto-rows-fr grid-cols-7 gap-1.5">
         {Array.from({ length: offset }, (_, i) => (
           <div key={`pad-${i}`} />
         ))}
@@ -49,7 +50,7 @@ export function ActivityCard(): JSX.Element {
           <div
             key={i}
             title={`${i + 1} ${now.toLocaleString(undefined, { month: 'short' })}: ${formatPlaytime(m)}`}
-            className={`aspect-[1.6] rounded-md ${level(m)} ${i + 1 === today ? 'ring-1 ring-white/40' : ''}`}
+            className={`min-h-[26px] rounded-md ${level(m)} ${i + 1 === today ? 'ring-1 ring-white/40' : ''}`}
           />
         ))}
       </div>
