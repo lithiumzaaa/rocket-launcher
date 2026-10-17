@@ -2,13 +2,15 @@ import path from 'node:path'
 import type { Game, GameSource } from '../../shared/types'
 import { libraryStore } from '../db'
 import { battlenetScanner } from './battlenet'
+import { eaScanner } from './ea'
 import { epicScanner } from './epic'
 import { foldersScanner } from './folders'
 import { steamScanner } from './steam'
 import type { ScannedGame, Scanner } from './types'
+import { xboxScanner } from './xbox'
 
 /** Launchers first: when a folder-scanned game is also a launcher game, the launcher's entry wins. */
-const SCANNERS: Scanner[] = [steamScanner, epicScanner, battlenetScanner, foldersScanner]
+const SCANNERS: Scanner[] = [steamScanner, epicScanner, battlenetScanner, eaScanner, xboxScanner, foldersScanner]
 
 /**
  * Runs every scanner, then merges with the saved library: tracking/user fields

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Achievement, AchievementSet } from '@shared/types'
+import type { AchievementSet } from '@shared/types'
 import { useLibrary } from '../store/library'
 
 /**
@@ -38,9 +38,3 @@ export function rarity(percent: number | undefined): Rarity | undefined {
   if (percent < 40) return { label: 'Uncommon', className: 'bg-white/[0.06] text-ink-muted' }
   return { label: 'Common', className: 'bg-white/[0.06] text-ink-faint' }
 }
-
-export const latestUnlocked = (items: Achievement[], count: number): Achievement[] =>
-  items
-    .filter((a) => a.unlocked)
-    .sort((a, b) => (b.unlockedAt ?? 0) - (a.unlockedAt ?? 0))
-    .slice(0, count)

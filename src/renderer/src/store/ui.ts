@@ -35,8 +35,6 @@ interface UiState {
   /** Inline library filter text. */
   query: string
   gameId?: string
-  /** Favourite picked in the Home bar; the hero shows it instead of the last played game. */
-  featuredId?: string
   searchOpen: boolean
   menu?: MenuState
   /** Game whose Customise dialog is open. */
@@ -48,7 +46,6 @@ interface UiState {
   setQuery: (query: string) => void
   openGame: (id: string) => void
   back: () => void
-  setFeatured: (id: string | undefined) => void
   setSearchOpen: (open: boolean) => void
   openMenu: (menu: MenuState) => void
   closeMenu: () => void
@@ -86,7 +83,6 @@ export const useUi = create<UiState>((set, get) => ({
     })
   },
   back: () => set({ section: get().previousSection }),
-  setFeatured: (featuredId) => set({ featuredId }),
   setSearchOpen: (searchOpen) => set({ searchOpen, menu: undefined }),
   openMenu: (menu) => set({ menu }),
   closeMenu: () => set({ menu: undefined }),

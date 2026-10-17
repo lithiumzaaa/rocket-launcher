@@ -46,7 +46,8 @@ const api: Api = {
     return () => ipcRenderer.removeListener('playtime:running', listener)
   },
   getActivity: (year, month) => ipcRenderer.invoke('playtime:activity', year, month),
-  getSessions: (gameId, limit) => ipcRenderer.invoke('playtime:sessions', gameId, limit)
+  getSessions: (gameId, limit) => ipcRenderer.invoke('playtime:sessions', gameId, limit),
+  getPlayerStats: (recentLimit) => ipcRenderer.invoke('playtime:stats', recentLimit)
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -1,4 +1,4 @@
-export type GameSource = 'steam' | 'epic' | 'gog' | 'ubisoft' | 'ea' | 'battlenet' | 'manual'
+export type GameSource = 'steam' | 'epic' | 'gog' | 'ubisoft' | 'ea' | 'battlenet' | 'xbox' | 'manual'
 
 export interface Game {
   /** `${source}:${sourceId}` */
@@ -92,6 +92,29 @@ export interface Session {
   minutes: number
 }
 
+export type DayPart = 'morning' | 'afternoon' | 'evening' | 'night'
+
+/** Home dashboard: the player's own stats across every game, from tracked sessions. */
+export interface PlayerStats {
+  /** Minutes in the last 7 days (today included) and the 7 before. */
+  weekMinutes: number
+  prevWeekMinutes: number
+  /** Days with play in the last 7. */
+  weekDaysPlayed: number
+  /** Distinct games played in the last 7 days. */
+  weekGames: number
+  /** Consecutive days with play, ending today (or yesterday, until today is over). */
+  currentStreak: number
+  longestStreak: number
+  sessionCount: number
+  averageSessionMinutes: number
+  longestSession?: { gameId: string; minutes: number; start: number }
+  /** Minutes played per part of the day; all zero with no sessions. */
+  dayParts: Record<DayPart, number>
+  /** Most recently played games, newest first, with their latest tracked session. */
+  recent: { gameId: string; lastPlayed: number; lastSessionMinutes?: number }[]
+}
+
 export interface ManualGame {
   exePath: string
   title: string
@@ -172,4 +195,6 @@ export interface Api {
   getActivity(year: number, month: number): Promise<number[]>
   /** Most recent tracked sessions for a game, newest first. */
   getSessions(gameId: string, limit: number): Promise<Session[]>
+  /** Personal stats across all games for the Home dashboard. */
+  getPlayerStats(recentLimit: number): Promise<PlayerStats>
 }

@@ -8,12 +8,13 @@ import { GameIcon } from './Art'
 
 /**
  * Home favourites strip (after Battle.net's): an icon per favourite in the order they were
- * added. Clicking one shows it in the hero; right-click for its menu (remove, play…);
+ * added. Clicking one opens its game page; right-click for its menu (remove, play…);
  * "+" opens the add list.
  */
-export function FavoritesBar({ selectedId }: { selectedId?: string }): JSX.Element {
+export function FavoritesBar(): JSX.Element {
   const games = useLibrary((s) => s.games)
-  const setFeatured = useUi((s) => s.setFeatured)
+  const running = useLibrary((s) => s.running)
+  const openGame = useUi((s) => s.openGame)
   const openMenu = useUi((s) => s.openMenu)
   const [adding, setAdding] = useState(false)
 
@@ -29,8 +30,8 @@ export function FavoritesBar({ selectedId }: { selectedId?: string }): JSX.Eleme
         <FavoriteTile
           key={g.id}
           game={g}
-          selected={g.id === selectedId}
-          onClick={() => setFeatured(g.id)}
+          selected={running.includes(g.id)}
+          onClick={() => openGame(g.id)}
           onMenu={(x, y) => openMenu({ gameId: g.id, x, y })}
         />
       ))}
@@ -75,8 +76,7 @@ function FavoriteTile({
         e.preventDefault()
         onMenu(e.clientX, e.clientY)
       }}
-      aria-label={game.title}
-      aria-pressed={selected}
+      aria-label={selected ? `${game.title} (playing)` : game.title}
       className={`group relative flex h-[72px] w-[72px] shrink-0 items-center justify-center transition-colors ${
         selected ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'
       }`}
@@ -84,7 +84,7 @@ function FavoriteTile({
       <span className="float-on-hover relative h-10 w-10">
         <GameIcon game={game} />
       </span>
-      {/* Selection underline, like Battle.net's */}
+      {/* Underline (like Battle.net's) marks a favourite that's running */}
       <span
         className={`absolute inset-x-0 bottom-0 h-0.5 transition-colors ${
           selected ? 'bg-accent' : 'bg-transparent'

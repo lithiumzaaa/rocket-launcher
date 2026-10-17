@@ -3,20 +3,25 @@ import type { Game } from '@shared/types'
 import { formatPlaytime, totalMinutes } from '@shared/playtime'
 import { lastPlayedGame, useLibrary, visibleGames } from '../store/library'
 import { useUi } from '../store/ui'
-import { AchievementsSummary } from './AchievementsCard'
 import { ActivityCard } from './ActivityCard'
 import { CoverArt } from './Art'
 import { FavoritesBar } from './FavoritesBar'
 import { GameHero } from './GameHero'
 import { PlayButton } from './PlayButton'
+import { HabitsCard, RecentlyPlayed, StreakCard, usePlayerStats, WeekCard } from './PlayerStats'
 
+/** The hero's game plus the six recently played after it. */
+const RECENT_LIMIT = 7
+
+/**
+ * The hero is always the last played game, for a one-click relaunch. Everything below
+ * it is the player's own stats across all games; per-game stats live on the game page.
+ */
 export function HomeView(): JSX.Element {
   const games = useLibrary((s) => s.games)
-  const featuredId = useUi((s) => s.featuredId)
+  const stats = usePlayerStats(RECENT_LIMIT)
   const visible = visibleGames(games)
-  // A favourite picked in the bar wins; otherwise the last played game.
-  const featured = visible.find((g) => g.id === featuredId && g.favorite)
-  const heroGame = featured ?? lastPlayedGame(games)
+  const heroGame = lastPlayedGame(games)
   const mostPlayed = [...visible]
     .filter((g) => totalMinutes(g) > 0)
     .sort((a, b) => totalMinutes(b) - totalMinutes(a))
@@ -25,19 +30,23 @@ export function HomeView(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-6">
-      <FavoritesBar selectedId={heroGame?.id} />
+      <FavoritesBar />
 
       {heroGame ? <ContinueHero game={heroGame} /> : <WelcomeHero />}
 
+      {stats && <RecentlyPlayed stats={stats} games={visible} skipId={heroGame?.id} />}
+
+      {stats && (
+        <div className="grid grid-cols-3 gap-6">
+          <WeekCard stats={stats} />
+          <StreakCard stats={stats} />
+          <HabitsCard stats={stats} games={games} />
+        </div>
+      )}
+
       <div className="grid grid-cols-[1fr_1.3fr_1.2fr] gap-6">
-        {/* The hero game's achievements when it has them (Steam + API key), else library totals. */}
-        {(() => {
-          const library = <LibraryCard count={visible.length} minutes={total} />
-          return heroGame ? <AchievementsSummary gameId={heroGame.id} fallback={library} /> : library
-        })()}
-
+        <LibraryCard count={visible.length} minutes={total} />
         <MostPlayedCard games={mostPlayed} />
-
         <ActivityCard />
       </div>
     </div>

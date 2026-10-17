@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Lock, Trophy } from 'lucide-react'
 import type { Achievement, AchievementSet } from '@shared/types'
 import { formatLastPlayed } from '@shared/playtime'
-import { latestUnlocked, rarity, useAchievements } from '../lib/achievements'
+import { rarity, useAchievements } from '../lib/achievements'
 import { useUi } from '../store/ui'
 
 type Tab = 'unlocked' | 'locked'
@@ -80,48 +80,6 @@ export function AchievementsCard({ gameId }: { gameId: string }): JSX.Element | 
         <button onClick={() => setExpanded((e) => !e)} className="pill mt-4">
           {expanded ? 'Show fewer' : `Show all ${list.length}`}
         </button>
-      )}
-    </section>
-  )
-}
-
-/** Home: progress + the latest unlocks for the hero game; `fallback` when there's nothing to show. */
-export function AchievementsSummary({
-  gameId,
-  fallback
-}: {
-  gameId: string
-  fallback: JSX.Element
-}): JSX.Element {
-  const data = useAchievements(gameId)
-  const openGame = useUi((s) => s.openGame)
-  if (!data || data.status !== 'ok') return fallback
-  const latest = latestUnlocked(data.items, 3)
-
-  return (
-    <section className="card flex flex-col p-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Achievements</h3>
-        <button onClick={() => openGame(gameId)} className="text-xs font-medium text-ink-muted hover:text-ink">
-          View all
-        </button>
-      </div>
-      <Progress data={data} className="mt-3" />
-      <div className="mt-5 text-[11px] font-medium uppercase tracking-[0.12em] text-ink-faint">Last unlocked</div>
-      {latest.length === 0 ? (
-        <p className="mt-2 text-sm text-ink-muted">Nothing unlocked yet.</p>
-      ) : (
-        <div className="mt-2 flex flex-col gap-3">
-          {latest.map((a) => (
-            <div key={a.id} className="flex items-center gap-3">
-              <AchievementIcon a={a} size="h-10 w-10" />
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">{a.name}</div>
-                <div className="truncate text-xs text-ink-muted">{a.description}</div>
-              </div>
-            </div>
-          ))}
-        </div>
       )}
     </section>
   )

@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises'
 import type { Game, GameSource } from '../../shared/types'
 
 /** What a scanner knows about a game; user/tracking fields are filled in when merging. */
@@ -12,4 +13,13 @@ export interface Scanner {
 /** Strips trademark symbols that clutter titles (and later break art searches). */
 export function cleanTitle(title: string): string {
   return title.replace(/[®™©]/g, '').replace(/\s+/g, ' ').trim()
+}
+
+export async function exists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p)
+    return true
+  } catch {
+    return false
+  }
 }

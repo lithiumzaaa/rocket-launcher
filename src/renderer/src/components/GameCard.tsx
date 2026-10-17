@@ -5,8 +5,8 @@ import { useUi } from '../store/ui'
 import { CoverArt } from './Art'
 import { CARD_ROUND_BUTTON, RoundPlayButton } from './PlayButton'
 
-/** Library tile: cover + title. Hover shows info/play; right-click opens the game menu. */
-export function GameCard({ game, index }: { game: Game; index: number }): JSX.Element {
+/** Library tile: cover + title (+ optional muted line). Hover shows info/play; right-click opens the game menu. */
+export function GameCard({ game, index, subtitle }: { game: Game; index: number; subtitle?: string }): JSX.Element {
   const openGame = useUi((s) => s.openGame)
   const openMenu = useUi((s) => s.openMenu)
   const running = useIsRunning(game.id)
@@ -63,6 +63,7 @@ export function GameCard({ game, index }: { game: Game; index: number }): JSX.El
       <div className="mt-3 truncate px-0.5 text-sm font-medium" title={game.title}>
         {game.title}
       </div>
+      {subtitle && <div className="mt-0.5 truncate px-0.5 text-xs text-ink-muted">{subtitle}</div>}
     </div>
   )
 }

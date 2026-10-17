@@ -3,10 +3,24 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
+/**
+ * Runs `reg` with a UTF-8 console: in the default OEM codepage, piped output mangles
+ * non-ASCII names (`Battlefield™ 6` → `BattlefieldT 6`).
+ */
+async function reg(args: string[], maxBuffer?: number): Promise<string> {
+  const command = `chcp 65001>nul & reg ${args.map((a) => `"${a}"`).join(' ')}`
+  const { stdout } = await execFileAsync('cmd.exe', ['/d', '/s', '/c', `"${command}"`], {
+    windowsHide: true,
+    windowsVerbatimArguments: true,
+    maxBuffer
+  })
+  return stdout
+}
+
 /** Reads one registry value via `reg query` (no native module). Undefined if the key/value is missing. */
 export async function queryValue(key: string, name: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execFileAsync('reg', ['query', key, '/v', name], { windowsHide: true })
+    const stdout = await reg(['query', key, '/v', name])
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const match = stdout.match(new RegExp(`^\\s*${escaped}\\s+REG_\\w+\\s+(.*)$`, 'mi'))
     return match?.[1].trim()
@@ -23,7 +37,7 @@ export async function querySubkeys(key: string): Promise<Map<string, Record<stri
   const result = new Map<string, Record<string, string>>()
   let stdout: string
   try {
-    ;({ stdout } = await execFileAsync('reg', ['query', key, '/s'], { windowsHide: true, maxBuffer: 32 * 1024 * 1024 }))
+    stdout = await reg(['query', key, '/s'], 32 * 1024 * 1024)
   } catch {
     return result
   }
@@ -47,6 +61,12 @@ const UNINSTALL_KEYS = [
   'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
   'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall'
 ]
+
+/** Strips the quotes/icon index Windows puts on DisplayIcon: `"C:\x\Game.exe",0`. */
+export function iconExe(displayIcon: string | undefined): string | undefined {
+  const p = displayIcon?.replace(/,\s*-?\d+$/, '').replace(/^"|"$/g, '').trim()
+  return p && /\.exe$/i.test(p) ? p : undefined
+}
 
 /** Windows' "installed apps" entries from all three hives. */
 export async function uninstallEntries(): Promise<Record<string, string>[]> {

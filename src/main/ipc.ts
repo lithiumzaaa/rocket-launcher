@@ -21,7 +21,9 @@ import { ensureDescriptions } from './metadata'
 import {
   activityForGame,
   activityForMonth,
+  importBattlenetLastPlayed,
   importSteamPlaytime,
+  playerStats,
   runningGameIds,
   sessionsForGame
 } from './playtime'
@@ -117,6 +119,7 @@ export function registerIpc({ acrylic }: { acrylic: boolean }): void {
   ipcMain.handle('library:get', () => libraryStore().get().games)
   ipcMain.handle('library:scan', async () => {
     await scanLibrary()
+    await importBattlenetLastPlayed()
     const games = await importSteamPlaytime()
     refreshCovers()
     return games
@@ -172,4 +175,5 @@ export function registerIpc({ acrylic }: { acrylic: boolean }): void {
   )
   ipcMain.handle('playtime:activity', (_e, year: number, month: number) => activityForMonth(year, month))
   ipcMain.handle('playtime:sessions', (_e, gameId: string, limit: number) => sessionsForGame(gameId, limit))
+  ipcMain.handle('playtime:stats', (_e, recentLimit: number) => playerStats(recentLimit))
 }

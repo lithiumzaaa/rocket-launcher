@@ -1,8 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { Game, Session } from '../shared/types'
+import type { DayPart, Game, PlayerStats, Session } from '../shared/types'
 import { libraryStore, sessionsStore, updateGame, type ActiveSession } from './db'
+import { readBattlenetConfig } from './scanners/battlenet'
 import { findSteamRoot } from './scanners/steam'
 import { parseVdf, vdfObj, vdfStr } from './scanners/vdf'
 
@@ -13,19 +14,64 @@ const LIST_TIMEOUT_MS = 10_000
 const STEAM_REIMPORT_DELAY_MS = 20_000
 const END_MARKER = '<<rocket-launcher-end>>'
 
+/**
+ * Get-Process's .Path needs full query rights, so it comes back empty for elevated,
+ * packaged (Xbox / WindowsApps) and many anti-cheat games. QueryFullProcessImageName
+ * only needs limited rights, which Windows grants for nearly every user process.
+ */
+const LIST_HELPER = `
+if (-not ('RlProc' -as [type])) { try { Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class RlProc {
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr h, uint flags, StringBuilder name, ref uint size);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  public static string[] List() {
+    var rows = new List<string>();
+    foreach (var p in Process.GetProcesses()) {
+      string path = "";
+      IntPtr h = OpenProcess(0x1000, false, p.Id);
+      if (h != IntPtr.Zero) {
+        var sb = new StringBuilder(1024); uint size = 1024;
+        if (QueryFullProcessImageName(h, 0, sb, ref size)) path = sb.ToString();
+        CloseHandle(h);
+      }
+      rows.Add(p.ProcessName + "|" + path);
+      p.Dispose();
+    }
+    return rows.ToArray();
+  }
+}
+'@ } catch {} }
+function Get-RlProcesses {
+  if ('RlProc' -as [type]) { [RlProc]::List() } else { Get-Process | ForEach-Object { $_.ProcessName + '|' + $_.Path } }
+}
+`
+
+interface RunningProcess {
+  /** Exe name without `.exe`, lowercased. */
+  name: string
+  /** Lowercased full path; empty when Windows won't tell us (protected/other-session processes). */
+  path: string
+}
+
 export interface PlaytimeEvents {
   onLibrary: (games: Game[]) => void
   onRunning: (ids: string[]) => void
 }
 
 /**
- * One long-lived hidden PowerShell that prints the exe path of every running
- * process on request. Far cheaper than spawning a shell every poll.
+ * One long-lived hidden PowerShell that lists every running process (name + exe
+ * path) on request. Far cheaper than spawning a shell every poll.
  */
 class ProcessLister {
   private ps?: ChildProcessWithoutNullStreams
   private buffer = ''
-  private pending?: (paths: string[] | null) => void
+  private pending?: (processes: RunningProcess[] | null) => void
 
   private shell(): ChildProcessWithoutNullStreams {
     if (this.ps && this.ps.exitCode === null) return this.ps
@@ -39,7 +85,7 @@ class ProcessLister {
       if (end < 0) return
       const out = this.buffer.slice(0, end)
       this.buffer = this.buffer.slice(end + END_MARKER.length)
-      this.resolve(out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean))
+      this.resolve(parseRows(out))
     })
     ps.stdin.on('error', () => {})
     ps.on('exit', () => {
@@ -48,37 +94,53 @@ class ProcessLister {
     })
     // Non-ASCII install paths must survive the pipe.
     ps.stdin.write('[Console]::OutputEncoding = [Text.Encoding]::UTF8\n')
+    // Here-strings need real newlines, so the helper is sent as one script block.
+    ps.stdin.write(`. ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(LIST_HELPER, 'utf8').toString('base64')}'))))\n`)
     this.ps = ps
     return ps
   }
 
-  private resolve(paths: string[] | null): void {
+  private resolve(processes: RunningProcess[] | null): void {
     const cb = this.pending
     this.pending = undefined
-    cb?.(paths)
+    cb?.(processes)
   }
 
-  /** Running exe paths, or null if the shell failed (callers should skip that poll). */
-  list(): Promise<string[] | null> {
+  /** Running processes, or null if the shell failed (callers should skip that poll). */
+  list(): Promise<RunningProcess[] | null> {
     if (this.pending) return Promise.resolve(null)
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.ps?.kill()
         this.resolve(null)
       }, LIST_TIMEOUT_MS)
-      this.pending = (paths) => {
+      this.pending = (processes) => {
         clearTimeout(timer)
-        resolve(paths)
+        resolve(processes)
       }
-      this.shell().stdin.write(
-        `Get-Process | ForEach-Object { $_.Path } | Where-Object { $_ } | Sort-Object -Unique; '${END_MARKER}'\n`
-      )
+      this.shell().stdin.write(`Get-RlProcesses | Sort-Object -Unique; '${END_MARKER}'\n`)
     })
   }
 
   stop(): void {
     this.ps?.kill()
   }
+}
+
+/** `name|path` lines → processes. */
+function parseRows(out: string): RunningProcess[] {
+  const rows: RunningProcess[] = []
+  for (const line of out.split(/\r?\n/)) {
+    const sep = line.indexOf('|')
+    if (sep <= 0) continue
+    rows.push({ name: line.slice(0, sep).trim().toLowerCase(), path: line.slice(sep + 1).trim().toLowerCase() })
+  }
+  return rows
+}
+
+/** "bf6" for `D:\Battlefield 6\bf6.exe`: matches processes Windows won't give a path for. */
+function exeName(exePath: string | undefined): string | undefined {
+  return exePath ? path.parse(exePath).name.toLowerCase() || undefined : undefined
 }
 
 /** "d:\steamlibrary\steamapps\common\palworld\" — trailing slash so "Palworld2" can't match "Palworld". */
@@ -123,19 +185,26 @@ function scheduleSteamReimport(gameId: string): void {
 }
 
 async function poll(): Promise<void> {
-  const paths = await lister.list()
-  if (!paths) return
+  const processes = await lister.list()
+  if (!processes) return
   const now = Date.now()
 
   const dirs: [string, string][] = []
+  const names = new Map<string, string>()
   for (const g of libraryStore().get().games) {
     const key = dirKey(g.installDir)
     if (key) dirs.push([g.id, key])
+    const name = exeName(g.exePath)
+    if (name) names.set(name, g.id)
   }
   const running = new Set<string>()
-  for (const p of paths) {
-    const lower = p.toLowerCase()
-    for (const [id, key] of dirs) if (lower.startsWith(key)) running.add(id)
+  for (const p of processes) {
+    if (p.path) {
+      for (const [id, key] of dirs) if (p.path.startsWith(key)) running.add(id)
+    } else {
+      const id = names.get(p.name)
+      if (id) running.add(id)
+    }
   }
 
   let changed = false
@@ -232,6 +301,86 @@ export function activityForGame(gameId: string, days: number): number[] {
   return minutesPerDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1)), days, gameId)
 }
 
+/** Local calendar day as a plain counter, so consecutive days differ by exactly 1 (DST-safe). */
+function dayNumber(ms: number): number {
+  const d = new Date(ms)
+  return Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000)
+}
+
+function dayPart(hour: number): DayPart {
+  if (hour >= 5 && hour < 12) return 'morning'
+  if (hour >= 12 && hour < 17) return 'afternoon'
+  if (hour >= 17 && hour < 22) return 'evening'
+  return 'night'
+}
+
+/** Personal stats across every game, from tracked sessions (running ones count up to now). */
+export function playerStats(recentLimit: number): PlayerStats {
+  const now = Date.now()
+  const sessions = sessionsStore().get().sessions
+  const spans: { gameId: string; start: number; end: number }[] = sessions.map((s) => ({ ...s }))
+  for (const [gameId, s] of active) spans.push({ gameId, start: s.start, end: now })
+
+  const today = new Date()
+  const week = minutesPerDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6), 7)
+  const prevWeek = minutesPerDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 13), 7)
+  const weekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6).getTime()
+
+  // Every day a session touches, plus minutes per part of the day (walked hour by hour).
+  const days = new Set<number>()
+  const dayParts: Record<DayPart, number> = { morning: 0, afternoon: 0, evening: 0, night: 0 }
+  const weekGames = new Set<string>()
+  for (const s of spans) {
+    if (s.end > weekStart) weekGames.add(s.gameId)
+    for (let d = dayNumber(s.start); d <= dayNumber(s.end); d++) days.add(d)
+    for (let t = s.start; t < s.end; ) {
+      const next = Math.min(s.end, new Date(t).setMinutes(60, 0, 0))
+      dayParts[dayPart(new Date(t).getHours())] += (next - t) / 60_000
+      t = next
+    }
+  }
+  for (const k of Object.keys(dayParts) as DayPart[]) dayParts[k] = Math.round(dayParts[k])
+
+  const sorted = [...days].sort((a, b) => a - b)
+  let longestStreak = 0
+  for (let i = 0, run = 0; i < sorted.length; i++) {
+    run = i > 0 && sorted[i] === sorted[i - 1] + 1 ? run + 1 : 1
+    longestStreak = Math.max(longestStreak, run)
+  }
+  // Today not played yet doesn't break the streak until the day is over.
+  let currentStreak = 0
+  for (let d = days.has(dayNumber(now)) ? dayNumber(now) : dayNumber(now) - 1; days.has(d); d--) currentStreak++
+
+  const longest = sessions.reduce<Session | undefined>((best, s) => (!best || s.minutes > best.minutes ? s : best), undefined)
+  const total = sessions.reduce((sum, s) => sum + s.minutes, 0)
+
+  const latestSession = new Map<string, Session>()
+  for (const s of sessions) {
+    const prev = latestSession.get(s.gameId)
+    if (!prev || s.start > prev.start) latestSession.set(s.gameId, s)
+  }
+  const recent = libraryStore()
+    .get()
+    .games.filter((g) => !g.hidden && g.lastPlayed)
+    .sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
+    .slice(0, recentLimit)
+    .map((g) => ({ gameId: g.id, lastPlayed: g.lastPlayed ?? 0, lastSessionMinutes: latestSession.get(g.id)?.minutes }))
+
+  return {
+    weekMinutes: week.reduce((a, b) => a + b, 0),
+    prevWeekMinutes: prevWeek.reduce((a, b) => a + b, 0),
+    weekDaysPlayed: week.filter((m) => m > 0).length,
+    weekGames: weekGames.size,
+    currentStreak,
+    longestStreak,
+    sessionCount: sessions.length,
+    averageSessionMinutes: sessions.length ? Math.round(total / sessions.length) : 0,
+    longestSession: longest && { gameId: longest.gameId, minutes: longest.minutes, start: longest.start },
+    dayParts,
+    recent
+  }
+}
+
 export function sessionsForGame(gameId: string, limit: number): Session[] {
   return sessionsStore()
     .get()
@@ -291,6 +440,26 @@ export async function importSteamPlaytime(): Promise<Game[]> {
     changed = true
     return { ...g, importedPlaytimeMinutes: s.minutes, lastPlayed }
   })
+  if (changed) libraryStore().set({ games: updated })
+  return updated
+}
+
+/**
+ * Battle.net keeps no playtime (the process watcher counts it), but it does record
+ * when each game was last played, including launches made while we weren't running.
+ */
+export async function importBattlenetLastPlayed(): Promise<Game[]> {
+  const played = (await readBattlenetConfig()).Games ?? {}
+  let changed = false
+  const updated = libraryStore()
+    .get()
+    .games.map((g) => {
+      if (g.source !== 'battlenet') return g
+      const seconds = Number(played[g.sourceId]?.LastPlayed ?? 0) || 0
+      if (seconds * 1000 <= (g.lastPlayed ?? 0)) return g
+      changed = true
+      return { ...g, lastPlayed: seconds * 1000 }
+    })
   if (changed) libraryStore().set({ games: updated })
   return updated
 }
