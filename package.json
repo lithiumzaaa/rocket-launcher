@@ -1,7 +1,7 @@
 {
   "name": "rocket-launcher",
   "productName": "Rocket Launcher",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Lightweight unified game launcher",
   "author": "Tristin Dawson",
   "main": "./out/main/index.js",

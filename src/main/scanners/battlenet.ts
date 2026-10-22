@@ -28,6 +28,11 @@ const LAUNCH_CODES: Record<string, string> = {
   rtro: 'RTRO'
 }
 
+/** Uids whose registered name isn't the game's real title (Reforged still registers as "Warcraft III"). */
+const TITLES: Record<string, string> = {
+  w3: 'Warcraft III: Reforged'
+}
+
 /** Where the client keeps per-game state (LastPlayed) and its default install folder. */
 const CLIENT_CONFIG = path.join(process.env.APPDATA ?? '', 'Battle.net', 'Battle.net.config')
 
@@ -135,7 +140,7 @@ export const battlenetScanner: Scanner = {
           id: `battlenet:${c.uid}`,
           source: 'battlenet',
           sourceId: c.uid,
-          title: cleanTitle(c.title),
+          title: TITLES[c.uid.toLowerCase()] ?? cleanTitle(c.title),
           installDir: dir,
           exePath: exe,
           // Through the client so login/updates happen; exe is the fallback.
